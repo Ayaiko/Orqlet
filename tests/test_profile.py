@@ -87,6 +87,109 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(r["timing_provenance"]["codex_item_metadata"], 2)
         self.assertNotIn("DO_NOT_EXPORT", json.dumps(r))
 
+    def test_paired_wait_agent_without_item_metadata_is_inferred_not_verified(self):
+        r = self.profile([event(0, "task_started", turn_id="turn"),
+            cx(1, "function_call", call_id="w", name="collaboration.wait_agent", arguments='{"timeout_ms":60000}'),
+            cx(4, "function_call_output", call_id="w", output="done"),
+            event(5, "task_complete", turn_id="turn")])
+        self.assertEqual(r["category_union_ms"]["agent_wait"], 3000)
+        wait = r["agent_wait_attribution"]
+        self.assertIsNone(wait["verified_metadata_union_ms"])
+        self.assertEqual(wait["inferred_round_trip_union_ms"], 3000)
+        self.assertEqual(wait["inferred_only_ms"], 3000)
+        self.assertEqual(wait["unmeasured_round_trip_calls"], 0)
+        self.assertEqual(r["observed_activity_union_ms"], 3000)
+        self.assertEqual(r["unattributed_within_completed_tasks_ms"], 2000)
+        text = subprocess.run([sys.executable, "-m", "orqlet", "profile", str(self.path)],
+                              capture_output=True, text=True, timeout=5)
+        self.assertEqual(text.returncode, 0, text.stderr)
+        self.assertIn("Verified metadata: unknown; inferred call/result: 3.000 s", text.stdout)
+        self.assertIn("Unattributed inside completed tasks: 2.000 s", text.stdout)
+
+    def test_missing_wait_item_timing_uses_only_the_paired_fallback(self):
+        epoch = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        for removed in [("started_at_ms",), ("completed_at_ms",), ("started_at_ms", "completed_at_ms")]:
+            with self.subTest(removed=removed):
+                metadata = event(4, "item_completed", started_at_ms=epoch + 1000, completed_at_ms=epoch + 4000,
+                                 item={"type": "CollabAgentToolCall", "id": "wait-item", "tool": "wait_agent"})
+                for field in removed:
+                    metadata["payload"].pop(field)
+                r = self.profile([cx(1, "function_call", call_id="w", name="wait_agent"), metadata,
+                                  cx(4, "function_call_output", call_id="w", output="done")])
+                self.assertEqual(r["category_union_ms"]["agent_wait"], 3000)
+                self.assertIsNone(r["agent_wait_attribution"]["verified_metadata_union_ms"])
+                self.assertEqual(r["agent_wait_attribution"]["inferred_round_trip_union_ms"], 3000)
+                self.assertEqual(r["warnings"]["missing_agent_wait_item_timing"], 1)
+
+    def test_verified_and_inferred_wait_overlap_is_never_added_twice(self):
+        epoch = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        r = self.profile([cx(1, "function_call", call_id="w", name="wait_agent"),
+            event(4, "item_completed", started_at_ms=epoch + 1500, completed_at_ms=epoch + 3500,
+                  item={"type": "CollabAgentToolCall", "id": "wait-item", "tool": "wait"}),
+            cx(4, "function_call_output", call_id="w", output="done")])
+        self.assertEqual(r["category_union_ms"]["agent_wait"], 3000)
+        wait = r["agent_wait_attribution"]
+        self.assertEqual(wait["verified_metadata_union_ms"], 2000)
+        self.assertEqual(wait["inferred_round_trip_union_ms"], 3000)
+        self.assertEqual(wait["inferred_only_ms"], 1000)
+        self.assertEqual(wait["attributed_union_ms"], 3000)
+
+    def test_provider_metadata_alone_is_verified_without_inferred_round_trip(self):
+        epoch = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        r = self.profile([event(4, "item_completed", started_at_ms=epoch + 1000, completed_at_ms=epoch + 4000,
+                  item={"type": "CollabAgentToolCall", "id": "wait-item", "tool": "wait"})])
+        self.assertEqual(r["category_union_ms"]["agent_wait"], 3000)
+        self.assertEqual(r["agent_wait_attribution"]["verified_metadata_union_ms"], 3000)
+        self.assertIsNone(r["agent_wait_attribution"]["inferred_round_trip_union_ms"])
+
+    def test_missing_wait_metadata_without_call_has_no_measured_duration(self):
+        r = self.profile([event(4, "item_completed", item={"type": "CollabAgentToolCall", "id": "w", "tool": "wait"})])
+        self.assertIsNone(r["category_union_ms"]["agent_wait"])
+        wait = r["agent_wait_attribution"]
+        self.assertIsNone(wait["verified_metadata_union_ms"])
+        self.assertIsNone(wait["inferred_round_trip_union_ms"])
+        self.assertEqual(wait["unusable_metadata_spans"], 1)
+
+    def test_wait_call_without_result_or_usable_clock_stays_unknown(self):
+        for records in [
+            [cx(1, "function_call", call_id="w", name="wait_agent", arguments='{"timeout_ms":60000}')],
+            [cx(4, "function_call", call_id="w", name="wait_agent"), cx(1, "function_call_output", call_id="w", output="done")],
+            [dict(cx(1, "function_call", call_id="w", name="wait_agent"), timestamp=None), cx(4, "function_call_output", call_id="w", output="done")],
+        ]:
+            r = self.profile(records)
+            self.assertIsNone(r["category_union_ms"]["agent_wait"])
+            wait = r["agent_wait_attribution"]
+            self.assertIsNone(wait["verified_metadata_union_ms"])
+            self.assertIsNone(wait["inferred_round_trip_union_ms"])
+            self.assertIsNone(wait["unmeasured_round_trip_ms"])
+            self.assertEqual(wait["unmeasured_round_trip_calls"], 1)
+
+    def test_generic_polling_and_spawn_are_not_agent_wait(self):
+        epoch = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        for name in ["functions.wait", "wait", "clock.sleep", "vendor.wait_agent"]:
+            r = self.profile([cx(1, "function_call", call_id="w", name=name),
+                              cx(4, "function_call_output", call_id="w", output="done"),
+                              event(4, "item_completed", started_at_ms=epoch + 1000, completed_at_ms=epoch + 4000,
+                                    item={"type": "CollabAgentToolCall", "id": "spawn", "tool": "spawn_agent"})])
+            self.assertIsNone(r["category_union_ms"]["agent_wait"], name)
+            self.assertIsNone(r["agent_wait_attribution"]["inferred_round_trip_union_ms"], name)
+
+    def test_caller_declared_wait_is_not_verified_provider_metadata(self):
+        r = self.profile([span("w", 1, 4, "agent_wait")])
+        self.assertEqual(r["category_union_ms"]["agent_wait"], 3000)
+        wait = r["agent_wait_attribution"]
+        self.assertEqual(wait["caller_declared_union_ms"], 3000)
+        self.assertIsNone(wait["verified_metadata_union_ms"])
+        self.assertIsNone(wait["inferred_round_trip_union_ms"])
+
+    def test_missing_reasoning_metadata_does_not_turn_gaps_into_reasoning(self):
+        r = self.profile([event(0, "task_started", turn_id="turn"),
+            event(4, "item_completed", item={"type": "Reasoning", "id": "r", "raw_content": "private"}),
+            event(5, "task_complete", turn_id="turn")])
+        self.assertIsNone(r["category_union_ms"]["reasoning"])
+        self.assertEqual(r["unattributed_within_completed_tasks_ms"], 5000)
+        self.assertEqual(r["warnings"]["invalid_or_missing_timing"], 1)
+
     def test_claude_ignores_blob_replays_and_labels_reported_thinking(self):
         call = {"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "node --test tests/a.mjs"}}
         r = self.profile([

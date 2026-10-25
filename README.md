@@ -22,7 +22,8 @@ The report distinguishes:
 
 - Tool call-to-result wall time; conservative test/build/Git/filesystem hints.
 - Explicit command-runtime and reasoning/response metadata where the provider records it.
-- Explicit waits, overlapping activity and incomplete/orphaned calls.
+- Agent wait split into verified metadata, inferred call/result intervals and
+  caller declarations, plus overlapping activity and incomplete/orphaned calls.
 - Unattributed time inside completed task windows. Long gaps between user turns
   are not silently called AI reasoning or wasted time.
 - Output bytes and repeated call signatures as candidates for investigation.
@@ -35,7 +36,9 @@ profiling never executes their commands. Redirect stdout explicitly to save a re
 ## Interpretation and limits
 
 Provider timing is not model CPU time. Missing timing is **unknown**, not zero.
-Categories can overlap: their sum is not elapsed time. Separate inputs are not
+Categories can overlap: their sum is not elapsed time. Agent-wait call/result
+intervals are inferred proxies that include transport/queue overhead; missing
+metadata never becomes verified wait. See the contract for evidence-level fields. Separate inputs are not
 summed as task duration or presented as a controlled model comparison. Workload
 hints are heuristic; repeated calls may be necessary. Output bytes are not tokens.
 Open turns/calls and format limitations remain visible in the report.
@@ -44,7 +47,8 @@ Default bounds: 128 MiB/file, 8 MiB/line, 250,000 records/file, 16 inputs and fi
 tool groups. Limits can be reduced or explicitly raised for file/line/record size;
 `--top` is capped at 20. Malformed/oversized input exits 2 without a partial report.
 
-This slice references [observability issue #3](https://github.com/Ayaiko/Orqlet/issues/3).
+This slice is tracked by [AI Session Profiling #12](https://github.com/Ayaiko/Orqlet/issues/12).
+[Issue #3](https://github.com/Ayaiko/Orqlet/issues/3) stays open for host resource observability.
 It does not finish the macOS resource collector or declare the broader stack/
 bootstrap dependencies complete. The Python CLI is a portable reference slice;
 no daemon, scheduler, GUI, automatic process control or Colima change is introduced.

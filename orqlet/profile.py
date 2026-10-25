@@ -20,6 +20,8 @@ WORKLOADS = {"test", "build", "git", "filesystem", "network", "wait", "other", "
 TOOLS = {"exec", "exec_command", "write_stdin", "wait", "wait_agent", "sleep",
          "Bash", "Read", "Grep", "Glob", "Edit", "Write", "Task", "Agent",
          "request_user_input", "request_user_input_async", "test", "git", "filesystem"}
+# Keep namespace-sensitive agent waits separate from generic execution polling.
+AGENT_WAIT_CALLS = {"wait_agent", "collaboration.wait_agent", "collaboration.wait"}
 
 
 def number(value):
@@ -147,6 +149,9 @@ class Trace:
         self.provenance = Counter()
         self.explicit_tools = []
         self.command_workloads = defaultdict(list)
+        self.verified_agent_wait = []
+        self.inferred_agent_wait = []
+        self.declared_agent_wait = []
         self.last_claude_turn = None
 
     def observe(self, ts):
@@ -156,11 +161,12 @@ class Trace:
     def add_span(self, start, end, kind, source):
         if not number(start) or not number(end) or end < start:
             self.warnings["invalid_or_missing_timing"] += 1
-            return
+            return False
         self.spans.append(Span(start, end, kind))
         self.provenance[source] += 1
         self.observe(start)
         self.observe(end)
+        return True
 
     def unique(self, key):
         if key in self.seen:
@@ -177,7 +183,7 @@ class Trace:
         command = args.get("command", args.get("cmd")) if isinstance(args, dict) else None
         tag = "wait" if name in {"wait", "wait_agent", "sleep", "request_user_input"} else workload(command)
         signature = hashlib.sha256(json.dumps([raw_name, args], sort_keys=True, ensure_ascii=False).encode()).hexdigest() if args is not None and isinstance(raw_name, str) else None
-        value = (ts, name, tag, signature)
+        value = (ts, name, tag, signature, raw_name in AGENT_WAIT_CALLS if isinstance(raw_name, str) else False)
         if key in self.starts:
             self.warnings["duplicate_call_start"] += 1
             if self.starts[key] != value:
@@ -241,6 +247,8 @@ class Trace:
         elif kind == "span" and obj.get("category") in KINDS:
             category = obj["category"]
             self.add_span(start, end, category, "caller_declared_span")
+            if category == "agent_wait":
+                self.declared_agent_wait.append((start, end))
             if category == "tool":
                 size = obj.get("output_bytes")
                 if size is not None and (not isinstance(size, int) or isinstance(size, bool) or size < 0):
@@ -287,7 +295,12 @@ class Trace:
                     # Only explicit wait calls are waiting; spawn/send are other activity.
                     if category == "agent_wait" and item.get("tool") not in {"wait", "wait_agent"}:
                         return
-                    self.add_span(start, end, category, "codex_item_metadata")
+                    valid = self.add_span(start, end, category, "codex_item_metadata")
+                    if category == "agent_wait":
+                        if valid:
+                            self.verified_agent_wait.append((start, end))
+                        else:
+                            self.warnings["missing_agent_wait_item_timing"] += 1
                     if category == "command" and number(start) and number(end) and end >= start:
                         self.command_workloads[workload(item.get("command"))].append((start, end))
         if obj.get("type") == "response_item":
@@ -342,19 +355,25 @@ class Trace:
         signatures = Counter()
         large_outputs = 0
         completed = 0
-        for key, (start, name, tag, signature) in self.starts.items():
+        unmeasured_agent_wait_calls = 0
+        for key, (start, name, tag, signature, agent_wait) in self.starts.items():
             g = groups[(name, tag)]
             g["calls"] += 1
             if signature is not None:
                 signatures[signature] += 1
             if key not in self.ends or key in self.invalid_calls:
+                unmeasured_agent_wait_calls += agent_wait
                 continue
             end, size, error = self.ends[key]
             if not number(start) or not number(end) or end < start:
                 self.warnings["invalid_call_timing"] += 1
+                unmeasured_agent_wait_calls += agent_wait
                 continue
             completed += 1
             self.add_span(start, end, "tool", "paired_log_timestamps")
+            if agent_wait:
+                self.inferred_agent_wait.append((start, end))
+                self.add_span(start, end, "agent_wait", "inferred_paired_agent_wait_identity")
             g["completed"] += 1
             g["intervals"].append((start, end))
             g["bytes"] += size or 0
@@ -395,6 +414,18 @@ class Trace:
             "completed_task_windows": len(self.windows), "open_task_windows": len(self.open_windows),
             "observed_activity_union_ms": round(activity_ms, 3) if activity_ms is not None else None,
             "category_union_ms": {kind: round(length(by_kind[kind]), 3) if kind in by_kind else None for kind in sorted(KINDS)},
+            "agent_wait_attribution": {
+                "verified_metadata_union_ms": round(length(self.verified_agent_wait), 3) if self.verified_agent_wait else None,
+                "inferred_round_trip_union_ms": round(length(self.inferred_agent_wait), 3) if self.inferred_agent_wait else None,
+                "inferred_only_ms": round(max(0, length(self.inferred_agent_wait) - intersection_length(self.inferred_agent_wait, self.verified_agent_wait)), 3) if self.inferred_agent_wait else None,
+                "caller_declared_union_ms": round(length(self.declared_agent_wait), 3) if self.declared_agent_wait else None,
+                "attributed_union_ms": round(length(by_kind["agent_wait"]), 3) if "agent_wait" in by_kind else None,
+                "verified_span_count": len(self.verified_agent_wait),
+                "inferred_call_count": len(self.inferred_agent_wait),
+                "unmeasured_round_trip_calls": unmeasured_agent_wait_calls,
+                "unusable_metadata_spans": self.warnings.get("missing_agent_wait_item_timing", 0),
+                "unmeasured_round_trip_ms": None if unmeasured_agent_wait_calls else 0,
+            },
             "unattributed_within_completed_tasks_ms": round(max(0, task_ms - intersection_length(activity, self.windows)), 3) if task_ms is not None else None,
             "outside_completed_task_windows_ms": round(max(0, log_ms - task_ms), 3) if task_ms is not None and log_ms is not None else None,
             "overlap_ms": round(sum(s.end - s.start for s in self.spans) - (activity_ms or 0), 3),
@@ -411,7 +442,7 @@ class Trace:
             "top_tools": rows[:top], "omitted_tool_groups": max(0, len(rows) - top),
             "warnings": dict(sorted(self.warnings.items())),
             "timing_provenance": dict(sorted(self.provenance.items())),
-            "interpretation": "Durations can overlap. Unattributed/idle time is not reasoning. Reported model timing is not CPU or proof of waste. Workload hints are heuristic; output bytes are not tokens."
+            "interpretation": "Durations can overlap. Agent-wait totals union verified metadata, inferred call/result intervals and caller declarations; do not add these. Inferred wait includes transport/queue overhead, not proven blocked-agent time. Unattributed/idle time is not reasoning. Reported model timing is not CPU or proof of waste. Workload hints are heuristic; output bytes are not tokens."
         }
 
 

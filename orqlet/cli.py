@@ -30,12 +30,16 @@ def text_report(reports):
     lines = ["Orqlet AI session timing (local, read-only)"]
     for i, r in enumerate(reports, 1):
         c = r["category_union_ms"]
+        wait = r["agent_wait_attribution"]
         lines += ["", "Input %d [%s]" % (i, r["format"]),
                   "  Log window: %s (includes idle; not AI working time)" % duration(r["log_window_ms"]),
                   "  Completed task windows: %s; open windows: %d" % (duration(r["completed_task_windows_ms"]), r["open_task_windows"]),
                   "  Tool round trips: %s; command metadata: %s" % (duration(c["tool"]), duration(c["command"])),
                   "  Reported reasoning: %s; response: %s" % (duration(c["reasoning"]), duration(c["response"])),
-                  "  Explicit agent wait: %s; user wait: %s" % (duration(c["agent_wait"]), duration(c["user_wait"])),
+                  "  Agent wait union: %s; user wait: %s" % (duration(c["agent_wait"]), duration(c["user_wait"])),
+                  "    Verified metadata: %s; inferred call/result: %s" % (duration(wait["verified_metadata_union_ms"]), duration(wait["inferred_round_trip_union_ms"])),
+                  "    Inferred outside verified spans: %s; caller-declared: %s" % (duration(wait["inferred_only_ms"]), duration(wait["caller_declared_union_ms"])),
+                  "    Wait calls without usable round-trip timing: %d%s" % (wait["unmeasured_round_trip_calls"], " (duration unknown)" if wait["unmeasured_round_trip_calls"] else ""),
                   "  Unattributed inside completed tasks: %s" % duration(r["unattributed_within_completed_tasks_ms"]),
                   "  Calls: %d complete / %d started; %d open/invalid; %d orphan results" %
                   (r["tool_calls"]["completed"], r["tool_calls"]["started"], r["tool_calls"]["open_or_invalid"], r["tool_calls"]["orphan_outputs"]),
@@ -54,6 +58,7 @@ def text_report(reports):
         if r["warnings"]:
             lines.append("  Data-quality counts: " + json.dumps(r["warnings"], sort_keys=True))
     lines += ["", "Unattributed time is not reasoning. Reported model timing is not CPU or proof of waste.",
+              "Verified metadata and inferred agent waits can overlap; inferred intervals include transport/queue overhead.",
               "Do not add overlapping categories or elapsed time across independent inputs."]
     return "\n".join(lines)
 
