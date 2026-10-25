@@ -62,6 +62,15 @@ completed duration. Call ranking includes counts, duration and output bytes;
 missing output size is unknown.
 Large/repeated outputs are diagnostic leads, not automatic claims of waste.
 
+`evidence_overlap_ms` (renamed from `overlap_ms` in this unmerged Draft v1) is
+the sum of all recorded span durations minus their activity union. It measures
+overlapping evidence, not execution concurrency or wall time with multiple active
+operations. Several spans can describe the same operation: a single three-second
+wait represented by tool round trip, inferred wait and verified metadata yields
+6,000 ms of evidence overlap but only 3,000 ms of activity/agent-wait union.
+The metric can exceed elapsed time. Actual execution concurrency is not measured;
+no concurrency metric is inferred from this value. The ambiguous old key is removed.
+
 ### Wait attribution (Draft v1 refinement)
 
 `category_union_ms.agent_wait` is the union of all attributed agent-wait spans.

@@ -428,7 +428,7 @@ class Trace:
             },
             "unattributed_within_completed_tasks_ms": round(max(0, task_ms - intersection_length(activity, self.windows)), 3) if task_ms is not None else None,
             "outside_completed_task_windows_ms": round(max(0, log_ms - task_ms), 3) if task_ms is not None and log_ms is not None else None,
-            "overlap_ms": round(sum(s.end - s.start for s in self.spans) - (activity_ms or 0), 3),
+            "evidence_overlap_ms": round(sum(s.end - s.start for s in self.spans) - (activity_ms or 0), 3),
             "tool_calls": {"started": len(self.starts) + len(self.explicit_tools),
                            "completed": completed + len(self.explicit_tools),
                            "open_or_invalid": len(self.starts) - completed,
@@ -442,7 +442,7 @@ class Trace:
             "top_tools": rows[:top], "omitted_tool_groups": max(0, len(rows) - top),
             "warnings": dict(sorted(self.warnings.items())),
             "timing_provenance": dict(sorted(self.provenance.items())),
-            "interpretation": "Durations can overlap. Agent-wait totals union verified metadata, inferred call/result intervals and caller declarations; do not add these. Inferred wait includes transport/queue overhead, not proven blocked-agent time. Unattributed/idle time is not reasoning. Reported model timing is not CPU or proof of waste. Workload hints are heuristic; output bytes are not tokens."
+            "interpretation": "Durations can overlap. evidence_overlap_ms is summed recorded span duration minus activity union: overlapping evidence, not execution concurrency. Multiple spans may describe one operation; this value can exceed elapsed time. Actual execution concurrency is not measured. Agent-wait totals union verified metadata, inferred call/result intervals and caller declarations; do not add these. Inferred wait includes transport/queue overhead, not proven blocked-agent time. Unattributed/idle time is not reasoning. Reported model timing is not CPU or proof of waste. Workload hints are heuristic; output bytes are not tokens."
         }
 
 

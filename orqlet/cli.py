@@ -58,6 +58,7 @@ def text_report(reports):
         if r["warnings"]:
             lines.append("  Data-quality counts: " + json.dumps(r["warnings"], sort_keys=True))
     lines += ["", "Unattributed time is not reasoning. Reported model timing is not CPU or proof of waste.",
+              "Evidence overlap is not execution concurrency; several spans may describe one operation.",
               "Verified metadata and inferred agent waits can overlap; inferred intervals include transport/queue overhead.",
               "Do not add overlapping categories or elapsed time across independent inputs."]
     return "\n".join(lines)

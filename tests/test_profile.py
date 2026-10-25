@@ -49,7 +49,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(r["category_union_ms"]["tool"], 15000)
         self.assertEqual(r["category_union_ms"]["reasoning"], 10000)
         self.assertEqual(r["observed_activity_union_ms"], 20000)
-        self.assertEqual(r["overlap_ms"], 10000)
+        self.assertEqual(r["evidence_overlap_ms"], 10000)
         self.assertEqual(r["unattributed_within_completed_tasks_ms"], 0)
 
     def test_user_gap_is_outside_task_windows_not_ai_work(self):
@@ -141,6 +141,25 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(r["category_union_ms"]["agent_wait"], 3000)
         self.assertEqual(r["agent_wait_attribution"]["verified_metadata_union_ms"], 3000)
         self.assertIsNone(r["agent_wait_attribution"]["inferred_round_trip_union_ms"])
+
+    def test_single_wait_evidence_overlap_does_not_claim_execution_concurrency(self):
+        epoch = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        r = self.profile([cx(1, "function_call", call_id="w", name="wait_agent"),
+            event(4, "item_completed", started_at_ms=epoch + 1000, completed_at_ms=epoch + 4000,
+                  item={"type": "CollabAgentToolCall", "id": "wait-item", "tool": "wait"}),
+            cx(4, "function_call_output", call_id="w", output="done")])
+        # Three representations of ONE three-second call give 9s - 3s = 6s
+        # of redundant evidence, not six seconds of concurrent execution.
+        self.assertEqual(r["tool_calls"]["started"], 1)
+        self.assertEqual(r["observed_activity_union_ms"], 3000)
+        self.assertEqual(r["agent_wait_attribution"]["verified_metadata_union_ms"], 3000)
+        self.assertEqual(r["agent_wait_attribution"]["inferred_round_trip_union_ms"], 3000)
+        self.assertEqual(r["agent_wait_attribution"]["inferred_only_ms"], 0)
+        self.assertEqual(r["category_union_ms"]["agent_wait"], 3000)
+        self.assertEqual(r.get("evidence_overlap_ms", r.get("overlap_ms")), 6000)
+        self.assertIn("evidence_overlap_ms", r)
+        self.assertNotIn("overlap_ms", r)
+        self.assertIn("not execution concurrency", r["interpretation"])
 
     def test_missing_wait_metadata_without_call_has_no_measured_duration(self):
         r = self.profile([event(4, "item_completed", item={"type": "CollabAgentToolCall", "id": "w", "tool": "wait"})])
@@ -302,6 +321,7 @@ class ProfileTests(unittest.TestCase):
         text = subprocess.run(command, capture_output=True, text=True, timeout=5)
         self.assertEqual(text.returncode, 0, text.stderr)
         self.assertIn("Unattributed time is not reasoning", text.stdout)
+        self.assertIn("Evidence overlap is not execution concurrency", text.stdout)
         self.assertEqual(self.path.read_bytes(), original_bytes)
 
     def test_cli_never_prints_a_partial_success_report_or_bad_input(self):

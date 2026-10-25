@@ -38,7 +38,10 @@ profiling never executes their commands. Redirect stdout explicitly to save a re
 Provider timing is not model CPU time. Missing timing is **unknown**, not zero.
 Categories can overlap: their sum is not elapsed time. Agent-wait call/result
 intervals are inferred proxies that include transport/queue overhead; missing
-metadata never becomes verified wait. See the contract for evidence-level fields. Separate inputs are not
+metadata never becomes verified wait. See the contract for evidence-level fields.
+`evidence_overlap_ms` describes overlapping span evidence, including several
+representations of one call; it does not measure actual execution concurrency.
+This Draft v1 rename removes the ambiguous `overlap_ms` key. Separate inputs are not
 summed as task duration or presented as a controlled model comparison. Workload
 hints are heuristic; repeated calls may be necessary. Output bytes are not tokens.
 Open turns/calls and format limitations remain visible in the report.
