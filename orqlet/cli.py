@@ -1,6 +1,7 @@
 """Small local CLI. Raw inputs and exception values never enter reports."""
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -81,7 +82,38 @@ def main(argv=None):
         command.add_argument("--max-file-mib", type=positive, default=128)
         command.add_argument("--max-line-mib", type=positive, default=8)
         command.add_argument("--max-records", type=positive, default=250_000)
+    sample = commands.add_parser("sample", help="Opt-in bounded macOS CPU/pressure/swap capture")
+    sample.add_argument("--duration", type=positive, default=60)
+    sample.add_argument("--output", help="Create a private local file without overwriting")
+    correlation = commands.add_parser("correlate", help="Offline correlation with explicit clock anchors")
+    correlation.add_argument("capture_file")
+    correlation.add_argument("timeline_file")
+    correlation.add_argument("--alignment", required=True)
+    correlation.add_argument("--input", type=positive, default=1)
+    correlation.add_argument("--output", help="Create a private local file without overwriting")
     args = parser.parse_args(argv)
+    if args.command in {"sample", "correlate"}:
+        from .resources import capture, encode_report, write_private
+        try:
+            if args.output and os.path.lexists(args.output):
+                raise InputError("cannot_create_private_output")
+            if args.command == "sample":
+                result = capture(args.duration)
+            else:
+                from .correlation import correlate_files
+                result = correlate_files(args.capture_file, args.timeline_file, args.alignment, args.input)
+            encoded = encode_report(result)
+            if args.output:
+                write_private(args.output, encoded)
+            else:
+                print(encoded, end="")
+            return 0
+        except KeyboardInterrupt:
+            print("orqlet: capture_cancelled", file=sys.stderr)
+            return 130
+        except InputError as error:
+            print("orqlet: %s" % error, file=sys.stderr)
+            return 2
     if len(args.files) > 16 or getattr(args, "top", 5) > 20:
         print("orqlet: input_or_output_count_limit", file=sys.stderr)
         return 2

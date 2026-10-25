@@ -73,3 +73,32 @@ This slice is tracked by [AI Session Profiling #12](https://github.com/Ayaiko/Or
 It does not finish the macOS resource collector or declare the broader stack/
 bootstrap dependencies complete. The Python CLI is a portable reference slice;
 no daemon, scheduler, GUI, automatic process control or Colima change is introduced.
+
+## Opt-in macOS host capture
+
+On macOS Apple Silicon with existing Apple Command Line Tools:
+
+```sh
+python3 -m orqlet sample --duration 3 --output capture.json
+```
+
+This creates a complete private `0600` file without overwriting an existing file.
+Default duration is 60 seconds, capped at 300 seconds at 1 Hz. The small native
+helper reads host CPU, swap and pressure notifications; it is compiled locally
+before the capture window, with no global SDK/settings changes. Pressure starts
+unknown until a native event; it is never inferred from free RAM or summed RSS.
+
+Optional offline correlation uses `jsonschema` to validate metadata contracts:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-correlation.txt
+.venv/bin/python -m orqlet correlate capture.json timeline.json --alignment alignment.json
+```
+
+There is no automatic clock alignment. Explicit, identity-bound clock anchors
+are required; even accepted anchors are caller-supplied evidence and source
+clock continuity remains unverified. No real AI-session correlation is claimed
+without those observations. See [capture/clock contracts](docs/resource-capture-v1.md)
+for bounds, examples, quality, failure handling and validation commands.
+Docker Guardian stays in [#14](https://github.com/Ayaiko/Orqlet/issues/14).
