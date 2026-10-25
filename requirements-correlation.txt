@@ -1,0 +1,2 @@
+# Optional offline correlation input validation; capture/profile/timeline remain stdlib-only.
+jsonschema>=4.18,<5

@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:orqlet:resources:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "capture_id",
+    "backend",
+    "os_version",
+    "requested_duration_s",
+    "sample_interval_ms",
+    "actual_elapsed_ms",
+    "preparation_elapsed_ms",
+    "clock_status",
+    "samples",
+    "collector",
+    "sdk_version"
+  ],
+  "properties": {
+    "schema": {"const": "orqlet.resources.v1"},
+    "capture_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "backend": {"const": "darwin_mach_dispatch_v1"},
+    "os_version": {"type": "string", "pattern": "^(unknown|[0-9]+(\\.[0-9]+){0,2})$", "maxLength": 32},
+    "requested_duration_s": {"type": "integer", "minimum": 1, "maximum": 300},
+    "sample_interval_ms": {"const": 1000},
+    "actual_elapsed_ms": {"type": "number", "minimum": 0},
+    "preparation_elapsed_ms": {"type": "number", "minimum": 0},
+    "clock_status": {"enum": ["continuous_observed", "discontinuous"]},
+    "samples": {"type": "array", "minItems": 2, "maxItems": 301, "items": {"$ref": "#/$defs/sample"}},
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "python_cpu_ms",
+        "native_cpu_ms",
+        "native_peak_rss_bytes",
+        "python_process_lifetime_peak_rss_bytes",
+        "wakeups",
+        "physical_footprint_bytes"
+      ],
+      "properties": {
+        "python_cpu_ms": {"type": "number", "minimum": 0},
+        "native_cpu_ms": {"type": "number", "minimum": 0},
+        "native_peak_rss_bytes": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "python_process_lifetime_peak_rss_bytes": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "wakeups": {"type": "null"},
+        "physical_footprint_bytes": {"type": "null"}
+      }
+    },
+    "sdk_version": {"type": "string", "pattern": "^(unknown|[0-9]+(\\.[0-9]+){0,2})$", "maxLength": 32}
+  },
+  "$defs": {
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "unix_ms",
+        "monotonic_ms",
+        "interval_ms",
+        "read_duration_ms",
+        "clock_quality",
+        "timing_quality",
+        "page_size_bytes",
+        "cpu",
+        "swap",
+        "pressure"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^s[1-9][0-9]*$"},
+        "unix_ms": {"type": "number", "minimum": -62135596800000, "maximum": 253402300799999},
+        "monotonic_ms": {"type": "number", "minimum": 0, "maximum": 9007199254740992},
+        "interval_ms": {"type": ["number", "null"], "minimum": 0},
+        "read_duration_ms": {"type": "number", "minimum": 0},
+        "clock_quality": {"enum": ["baseline", "continuous_observed", "discontinuous"]},
+        "timing_quality": {"enum": ["baseline", "available", "stale_read", "missed_interval"]},
+        "page_size_bytes": {"type": ["integer", "null"], "enum": [null, 4096, 8192, 16384, 32768, 65536]},
+        "cpu": {"$ref": "#/$defs/cpu"},
+        "swap": {"$ref": "#/$defs/swap"},
+        "pressure": {"$ref": "#/$defs/pressure"}
+      }
+    },
+    "cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["busy_percent", "quality", "read_quality"],
+      "properties": {
+        "busy_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "quality": {
+          "enum": [
+            "available",
+            "baseline",
+            "clock_discontinuity",
+            "stale_interval",
+            "denied",
+            "unavailable",
+            "counter_reset",
+            "no_counter_progress"
+          ]
+        },
+        "read_quality": {"enum": ["available", "denied", "unavailable"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"quality": {"const": "available"}}},
+          "then": {"properties": {"busy_percent": {"type": "number"}}},
+          "else": {"properties": {"busy_percent": {"type": "null"}}}
+        }
+      ]
+    },
+    "swap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used_bytes", "allocation_quality", "in_bytes", "out_bytes", "delta_quality", "counter_read_quality"],
+      "properties": {
+        "used_bytes": {"type": ["integer", "null"], "minimum": 0, "maximum": 18446744073709551615},
+        "allocation_quality": {"enum": ["available", "denied", "unavailable"]},
+        "in_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "out_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "delta_quality": {
+          "enum": [
+            "available",
+            "baseline",
+            "clock_discontinuity",
+            "stale_interval",
+            "denied",
+            "unavailable",
+            "counter_reset",
+            "page_size_changed"
+          ]
+        },
+        "counter_read_quality": {"enum": ["available", "denied", "unavailable"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"allocation_quality": {"const": "available"}}},
+          "then": {"properties": {"used_bytes": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}}},
+          "else": {"properties": {"used_bytes": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"delta_quality": {"const": "available"}}},
+          "then": {"properties": {"in_bytes": {"type": "integer"}, "out_bytes": {"type": "integer"}}},
+          "else": {"properties": {"in_bytes": {"type": "null"}, "out_bytes": {"type": "null"}}}
+        }
+      ]
+    },
+    "pressure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "quality", "last_event_monotonic_ms"],
+      "properties": {
+        "state": {"enum": ["unknown", "normal", "warning", "critical"]},
+        "quality": {"enum": ["awaiting_event", "event_observed", "unavailable", "coalesced_events"]},
+        "last_event_monotonic_ms": {"type": ["number", "null"], "minimum": 0, "maximum": 9007199254740992}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"quality": {"const": "event_observed"}}},
+          "then": {
+            "properties": {
+              "state": {"enum": ["normal", "warning", "critical"]},
+              "last_event_monotonic_ms": {"type": "number", "minimum": 0, "maximum": 9007199254740992}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"quality": {"const": "coalesced_events"}}},
+          "then": {
+            "properties": {
+              "state": {"const": "unknown"},
+              "last_event_monotonic_ms": {"type": "number", "minimum": 0, "maximum": 9007199254740992}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"quality": {"enum": ["awaiting_event", "unavailable"]}}},
+          "then": {"properties": {"state": {"const": "unknown"}, "last_event_monotonic_ms": {"type": "null"}}}
+        }
+      ]
+    }
+  }
+}
