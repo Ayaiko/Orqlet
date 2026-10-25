@@ -446,9 +446,8 @@ class Trace:
         }
 
 
-def profile_file(path, provider="auto", top=5, max_bytes=128 * 1024 * 1024,
-                 max_line_bytes=8 * 1024 * 1024, max_records=250_000):
-    trace = Trace(provider)
+def _read_file(path, trace, max_bytes, max_line_bytes, max_records):
+    """Shared bounded reader; adapters and aggregate calculations stay canonical."""
     digest = hashlib.sha256()
     byte_count = records = 0
     try:
@@ -482,6 +481,13 @@ def profile_file(path, provider="auto", top=5, max_bytes=128 * 1024 * 1024,
         raise InputError("cannot_read_input") from None
     if not trace.recognized:
         raise InputError("unsupported_or_empty_log")
+    return {"source_sha256": digest.hexdigest(), "input_bytes": byte_count, "input_records": records}
+
+
+def profile_file(path, provider="auto", top=5, max_bytes=128 * 1024 * 1024,
+                 max_line_bytes=8 * 1024 * 1024, max_records=250_000):
+    trace = Trace(provider)
+    metadata = _read_file(path, trace, max_bytes, max_line_bytes, max_records)
     report = trace.report(top)
-    report.update({"source_sha256": digest.hexdigest(), "input_bytes": byte_count, "input_records": records})
+    report.update(metadata)
     return report
