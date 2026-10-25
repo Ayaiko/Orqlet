@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:orqlet:session-timeline:v1",
+  "title": "Orqlet privacy-safe AI session timeline v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "inputs"],
+  "properties": {
+    "schema": {"const": "orqlet.timeline.v1"},
+    "inputs": {
+      "type": "array", "minItems": 1, "maxItems": 16,
+      "items": {"$ref": "#/$defs/input"}
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": ["number", "null"],
+      "minimum": -62135596800000,
+      "maximum": 253402300799999
+    },
+    "input": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "clock", "events", "diagnostics"],
+      "properties": {
+        "format": {"enum": ["codex", "claude", "trace"]},
+        "clock": {
+          "type": "object", "additionalProperties": false,
+          "required": ["basis", "monotonic_available", "correlation_status", "record_time_regressions", "missing_record_timestamps"],
+          "properties": {
+            "basis": {"const": "source_wall_clock"},
+            "monotonic_available": {"const": false},
+            "correlation_status": {"enum": ["requires_clock_validation", "blocked_record_order_regression", "no_usable_timestamps"]},
+            "record_time_regressions": {"type": "integer", "minimum": 0},
+            "missing_record_timestamps": {"type": "integer", "minimum": 0}
+          }
+        },
+        "events": {"type": "array", "items": {"$ref": "#/$defs/event"}},
+        "diagnostics": {
+          "type": "array", "maxItems": 11,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["code", "count"],
+            "properties": {
+              "code": {"enum": ["invalid_or_missing_timing", "duplicate_record", "invalid_call_id", "duplicate_call_start", "conflicting_call_start", "duplicate_call_end", "conflicting_call_end", "duplicate_task_start", "unmatched_task_end", "missing_agent_wait_item_timing", "invalid_call_timing"]},
+              "count": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "category", "source", "evidence", "start_unix_ms", "end_unix_ms", "duration_ms", "timing_quality"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^e[1-9][0-9]*$"},
+        "category": {"enum": ["tool", "command", "reasoning", "response", "agent_wait", "user_wait", "task_window", "unattributed"]},
+        "source": {"enum": ["codex_item_metadata", "claude_reported_thinking_duration", "paired_log_timestamps", "inferred_paired_agent_wait_identity", "caller_declared_span", "task_boundary", "unpaired_tool_call", "unattributed_task_residual"]},
+        "evidence": {"enum": ["verified_metadata", "inferred", "caller_declared", "unknown"]},
+        "start_unix_ms": {"$ref": "#/$defs/time"},
+        "end_unix_ms": {"$ref": "#/$defs/time"},
+        "duration_ms": {"type": ["number", "null"], "minimum": 0},
+        "timing_quality": {"enum": ["usable", "missing_timestamp", "reversed_timestamp", "out_of_range_timestamp", "conflicting_records", "unmatched_boundary"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"timing_quality": {"const": "usable"}}},
+          "then": {
+            "properties": {
+              "start_unix_ms": {"type": "number"},
+              "end_unix_ms": {"type": "number"},
+              "duration_ms": {"type": "number"}
+            }
+          },
+          "else": {"properties": {"duration_ms": {"type": "null"}, "evidence": {"const": "unknown"}}}
+        },
+        {
+          "if": {"properties": {"source": {"enum": ["codex_item_metadata", "claude_reported_thinking_duration"]}, "timing_quality": {"const": "usable"}}},
+          "then": {"properties": {"evidence": {"const": "verified_metadata"}}}
+        },
+        {
+          "if": {"properties": {"source": {"enum": ["paired_log_timestamps", "inferred_paired_agent_wait_identity", "task_boundary"]}, "timing_quality": {"const": "usable"}}},
+          "then": {"properties": {"evidence": {"const": "inferred"}}}
+        },
+        {
+          "if": {"properties": {"source": {"const": "caller_declared_span"}, "timing_quality": {"const": "usable"}}},
+          "then": {"properties": {"evidence": {"const": "caller_declared"}}}
+        },
+        {
+          "if": {"properties": {"source": {"enum": ["unpaired_tool_call", "unattributed_task_residual"]}}},
+          "then": {"properties": {"evidence": {"const": "unknown"}}}
+        }
+      ]
+    }
+  }
+}

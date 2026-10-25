@@ -5,6 +5,7 @@ import sys
 import time
 
 from .profile import InputError, profile_file
+from .timeline import SCHEMA as TIMELINE_SCHEMA, timeline_file
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -72,24 +73,39 @@ def main(argv=None):
     p.add_argument("--format", choices=["auto", "codex", "claude", "trace"], default="auto")
     p.add_argument("--json", action="store_true")
     p.add_argument("--top", type=positive, default=5)
-    p.add_argument("--max-file-mib", type=positive, default=128)
-    p.add_argument("--max-line-mib", type=positive, default=8)
-    p.add_argument("--max-records", type=positive, default=250_000)
+    t = commands.add_parser("timeline", help="Export privacy-safe timestamp metadata as JSON (opt-in)")
+    t.add_argument("files", nargs="+")
+    t.add_argument("--format", choices=["auto", "codex", "claude", "trace"], default="auto")
+    t.add_argument("--max-events", type=positive, default=50_000)
+    for command in (p, t):
+        command.add_argument("--max-file-mib", type=positive, default=128)
+        command.add_argument("--max-line-mib", type=positive, default=8)
+        command.add_argument("--max-records", type=positive, default=250_000)
     args = parser.parse_args(argv)
-    if len(args.files) > 16 or args.top > 20:
+    if len(args.files) > 16 or getattr(args, "top", 5) > 20:
         print("orqlet: input_or_output_count_limit", file=sys.stderr)
         return 2
     started = time.perf_counter()
     reports = []
     for i, path in enumerate(args.files, 1):
         try:
-            reports.append(profile_file(path, args.format, args.top,
-                                        args.max_file_mib * 1024 * 1024,
-                                        args.max_line_mib * 1024 * 1024,
-                                        args.max_records))
+            if args.command == "timeline":
+                reports.append(timeline_file(path, args.format,
+                                             args.max_file_mib * 1024 * 1024,
+                                             args.max_line_mib * 1024 * 1024,
+                                             args.max_records, args.max_events))
+            else:
+                reports.append(profile_file(path, args.format, args.top,
+                                            args.max_file_mib * 1024 * 1024,
+                                            args.max_line_mib * 1024 * 1024,
+                                            args.max_records))
         except InputError as error:
             print("orqlet: input_%d:%s" % (i, error), file=sys.stderr)
             return 2
+    if args.command == "timeline":
+        print(json.dumps({"schema": TIMELINE_SCHEMA, "inputs": reports}, ensure_ascii=False,
+                         indent=2, allow_nan=False))
+        return 0
     result = {"schema": "orqlet.profile.v1", "inputs": reports,
               "collector_elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
     print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else text_report(reports))

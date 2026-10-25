@@ -1,0 +1,2 @@
+# Development-only JSON Schema validation; CLI and regression suite remain stdlib-only.
+jsonschema>=4.18,<5
